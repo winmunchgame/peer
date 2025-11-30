@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>QR Send - Watch Party Edition</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; -webkit-tap-highlight-color: transparent; }
+        :root {
+            --primary: #075e54; --secondary: #128c7e; --bg: #e5ddd5; --white: #ffffff;
+            --text: #000000; --msg-sent: #dcf8c6; --msg-recv: #ffffff; --border: #ddd;
+            --red: #d32f2f; --green: #25d366; --black: #000000;
+        }
+        body.dark-mode {
+            --primary: #1f2c34; --secondary: #00af9c; --bg: #0b141a; --white: #111b21;
+            --text: #e9edef; --msg-sent: #005c4b; --msg-recv: #202c33; --border: #2a3942;
+        }
+        body { background: var(--bg); height: 100dvh; display: flex; justify-content: center; overflow: hidden; color: var(--text); transition: background 0.3s; }
+        .app-container { width: 100%; max-width: 1000px; height: 100%; background: var(--white); display: flex; box-shadow: 0 0 20px rgba(0, 0, 0, 0.1); position: relative; transition: background 0.3s; }
+
+        /* SIDEBAR */
+        .sidebar { width: 350px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--white); transition: transform 0.3s ease; z-index: 100; }
+        .header { padding: 15px; background: var(--primary); color: white; display: flex; justify-content: space-between; align-items: center; height: 60px; flex-shrink: 0; }
+        .status-badge { font-size: 12px; background: rgba(255, 255, 255, 0.2); padding: 4px 8px; border-radius: 12px; color: white; }
+        .connect-panel { padding: 20px; text-align: center; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
+        #qrcode { background: white; padding: 10px; display: inline-block; border-radius: 8px; margin-bottom: 15px; }
+        #qrcode img { display: block; max-width: 100%; }
+        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; display: inline-flex; align-items: center; gap: 8px; margin: 5px; transition: 0.2s; }
+        .btn-primary { background: var(--secondary); color: white; }
+        .btn-outline { border: 1px solid var(--secondary); color: var(--secondary); background: transparent; }
+        
+        /* WATCH PARTY BUTTON */
+        .watch-party-btn {
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
+            color: white; width: 90%; padding: 15px; border-radius: 10px; border: none;
+            font-size: 16px; font-weight: bold; cursor: pointer; margin: 10px auto;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            box-shadow: 0 4px 15px rgba(255, 75, 43, 0.3); animation: pulse-btn 2s infinite;
+        }
+        @keyframes pulse-btn { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
+
+        /* FILES */
+        .files-panel { padding: 15px; background: var(--white); border-top: 1px solid var(--border); display: flex; flex-direction: column; flex-grow: 1; min-height: 0; max-height: 50%; }
+        .files-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: bold; align-items: center; }
+        .magic-btn-small { padding: 8px 15px; border-radius: 8px; background: var(--white); border: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: bold; font-size: 13px; color: var(--text); }
+        #transfer-list { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px; }
+        .transfer-item { background: var(--msg-recv); padding: 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 13px; color: var(--text); }
+        .t-bar-fill { height: 6px; background: var(--green); width: 0%; border-radius: 3px; transition: width 0.2s; margin-top: 5px; }
+
+        /* CHAT AREA */
+        .chat-area { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--bg); position: relative; }
+        body:not(.dark-mode) .chat-area { background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); }
+        .chat-header { padding: 10px 15px; background: var(--white); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; height: 60px; flex-shrink: 0; }
+        .chat-user { display: flex; align-items: center; gap: 10px; }
+        .theme-toggle-btn { background: none; border: none; font-size: 20px; cursor: pointer; margin-right: 5px; }
+        .messages { flex-grow: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .msg { max-width: 75%; padding: 8px 12px; border-radius: 8px; font-size: 14px; position: relative; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); word-break: break-word; color: var(--text); }
+        .msg.sent { align-self: flex-end; background: var(--msg-sent); color: body.dark-mode ? #e9edef : #000; }
+        .msg.received { align-self: flex-start; background: var(--msg-recv); }
+        .input-area { padding: 10px; background: var(--white); display: flex; align-items: center; gap: 8px; flex-shrink: 0; border-top: 1px solid var(--border); }
+        #msg-input { flex-grow: 1; padding: 12px; border: none; border-radius: 20px; outline: none; font-size: 15px; background: var(--bg); color: var(--text); }
+        .send-btn { background: var(--secondary); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+        /* --- THEATER MODE (WATCH PARTY) --- */
+        #theater-mode {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 5000; display: none;
+            flex-direction: column;
+        }
+        
+        .theater-content {
+            flex-grow: 1; position: relative; display: flex; 
+            align-items: center; justify-content: center; width: 100%; height: 100%;
+        }
+
+        /* The Movie Player */
+        video.movie-player {
+            width: 100%; height: 100%; max-height: 100vh;
+            object-fit: contain;
+        }
+
+        /* Floating Peer Video (PiP) */
+        .peer-pip {
+            position: absolute; top: 20px; right: 20px;
+            width: 150px; height: 200px;
+            background: #333; border: 2px solid #fff;
+            border-radius: 10px; overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            cursor: move; z-index: 5002;
+            transition: width 0.2s, height 0.2s;
+        }
+        .peer-pip video { width: 100%; height: 100%; object-fit: cover; }
+        .peer-pip.enlarged { width: 300px; height: 400px; }
+
+        /* Self Video (Small) */
+        .self-pip {
+            position: absolute; bottom: 80px; right: 20px;
+            width: 80px; height: 100px;
+            background: #222; border: 1px solid #fff;
+            border-radius: 8px; overflow: hidden; z-index: 5003;
+        }
+        .self-pip video { width: 100%; height: 100%; object-fit: cover; }
+
+        /* Theater Controls */
+        .theater-controls {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: linear-gradient(transparent, rgba(0,0,0,0.9));
+            padding: 20px; display: flex; align-items: center; justify-content: space-between;
+            z-index: 5004; opacity: 0; transition: opacity 0.3s;
+        }
+        #theater-mode:hover .theater-controls { opacity: 1; }
+
+        .control-group { display: flex; gap: 15px; align-items: center; }
+        .t-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 10px; border-radius: 50%; cursor: pointer; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: 0.2s; }
+        .t-btn:hover { background: rgba(255,255,255,0.4); }
+        .t-btn.active { background: var(--green); }
+        .t-btn.danger { background: var(--red); }
+
+        /* General Overlays */
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 4000; display: none; flex-direction: column; align-items: center; justify-content: center; color: white; }
+        
+        #scanner-overlay { background: black; display: none; }
+        #qr-reader { width: 100%; max-width: 500px; }
+        .close-overlay { position: absolute; top: 20px; right: 20px; font-size: 30px; color: white; cursor: pointer; z-index: 4002; }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .app-container { flex-direction: column; }
+            .sidebar { width: 100%; height: 100%; position: absolute; transform: translateX(0); }
+            .sidebar.hidden { transform: translateX(-100%); }
+            .mobile-only { display: block; }
+            .peer-pip { width: 100px; height: 140px; top: 10px; right: 10px; }
+            .self-pip { width: 60px; height: 80px; bottom: 70px; right: 10px; }
+            .theater-controls { padding: 10px; flex-wrap: wrap; justify-content: center; }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- NOTIFICATION SOUND -->
+    <audio id="msg-sound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"></audio>
+
+    <!-- THEATER MODE (WATCH PARTY UI) -->
+    <div id="theater-mode">
+        <div class="theater-content">
+            <!-- Main Movie -->
+            <video id="movie-player" class="movie-player" playsinline></video>
+            
+            <!-- Peer Video (Draggable) -->
+            <div id="peer-video-container" class="peer-pip">
+                <video id="peer-video" autoplay playsinline></video>
+            </div>
+
+            <!-- Self Video -->
+            <div class="self-pip">
+                <video id="self-video" autoplay playsinline muted></video>
+            </div>
+
+            <!-- Controls -->
+            <div class="theater-controls">
+                <div class="control-group">
+                    <button class="t-btn danger" onclick="exitTheater()" title="Exit Watch Party">✕</button>
+                    <span style="color:white; font-weight:bold; font-size:14px;">🎬 Watch Party</span>
+                </div>
+
+                <!-- Sync Controls (Play/Pause are handled by video element, these are for extra actions) -->
+                <div class="control-group" style="color:#aaa; font-size:12px;">
+                    <span id="sync-status">Synced</span>
+                </div>
+
+                <!-- Call Controls -->
+                <div class="control-group">
+                    <button id="btn-mic" class="t-btn" onclick="toggleMic()" title="Toggle Mic">🎤</button>
+                    <button id="btn-cam" class="t-btn" onclick="toggleCam()" title="Toggle Camera">📷</button>
+                    <button class="t-btn" onclick="document.getElementById('movie-file').click()" title="Change Movie">📂</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP -->
+    <div class="app-container">
+        <!-- SIDEBAR -->
+        <div class="sidebar" id="sidebar">
+            <div class="header">
+                <div style="display:flex; align-items:center;">
+                    <button class="mobile-only btn" style="background:none; color:white; padding:0; margin-right:10px;" onclick="toggleSidebar()">←</button>
+                    <h2>QR Send</h2>
+                </div>
+                <div style="display:flex; align-items:center;">
+                    <button class="theme-toggle-btn" onclick="toggleTheme()" style="background:none; border:none; font-size:20px; cursor:pointer; margin-right:5px;">🌓</button>
+                    <span id="status-badge" class="status-badge">Disconnected</span>
+                </div>
+            </div>
+
+            <div class="connect-panel" id="connect-panel">
+                <div id="qrcode"></div>
+                <p style="color:#666; margin-bottom:10px; font-size:13px;">Scan to connect</p>
+                <div style="display:flex; justify-content:center; gap:5px;">
+                    <button class="btn btn-outline" onclick="shareQRCode()">🔗 Share</button>
+                    <button class="btn btn-primary" onclick="startScanner()">📷 Scan</button>
+                </div>
+            </div>
+
+            <!-- WATCH PARTY START BUTTON -->
+            <button class="watch-party-btn" onclick="document.getElementById('movie-file').click()">
+                <span>🎬</span> Start Watch Party
+            </button>
+            <input type="file" id="movie-file" accept="video/*, .mkv, .mp4" style="display:none" onchange="startWatchParty(this)">
+
+            <div class="files-panel" id="files-panel">
+                <div class="files-header">
+                    <span>File Transfer</span>
+                    <button class="magic-btn-small" onclick="document.getElementById('file-input').click()">📂 Send File</button>
+                </div>
+                <input type="file" id="file-input" multiple>
+                <div id="transfer-list"></div>
+            </div>
+        </div>
+
+        <!-- CHAT AREA -->
+        <div class="chat-area" id="chat-area">
+            <div class="chat-header">
+                <div class="chat-user">
+                    <button class="mobile-only btn" style="background:none; font-size:20px; padding:0; margin-right:10px;" onclick="toggleSidebar()">📂</button>
+                    <div>
+                        <div style="font-weight:bold;">Peer</div>
+                        <div style="font-size:11px; color:#666;" id="connection-status">Waiting...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="messages" id="messages"></div>
+
+            <div class="input-area">
+                <button class="btn" style="background:none; color:var(--secondary); padding:5px;" onclick="document.getElementById('img-input').click()">📷</button>
+                <input type="file" id="img-input" accept="image/*" style="display:none">
+                <input type="text" id="msg-input" placeholder="Message...">
+                <button class="send-btn" onclick="sendText()">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCANNER OVERLAY -->
+    <div id="scanner-overlay" class="overlay">
+        <div class="close-overlay" onclick="stopScanner()">✕</div>
+        <div id="qr-reader"></div>
+    </div>
+
+    <!-- IMAGE MODAL -->
+    <div id="img-modal" class="overlay" style="background:rgba(0,0,0,0.9);">
+        <div class="close-overlay" onclick="document.getElementById('img-modal').style.display='none'">✕</div>
+        <img id="modal-img" style="max-width:90%; max-height:80%;">
+        <a id="modal-dl" style="color:white; margin-top:20px; text-decoration:underline;" download>Download</a>
+    </div>
+
+    <script>
+        let peer, conn, myId;
+        let localStream, activeCall;
+        let isSyncing = false;
+        let isTheaterMode = false;
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.innerWidth < 768) document.querySelector('.mobile-only').style.display = 'block';
+            if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+            initApp();
+
+            // Text Input
+            document.getElementById('msg-input').addEventListener('keypress', (e) => { if(e.key === 'Enter') sendText(); });
+            
+            // Image Input
+            document.getElementById('img-input').addEventListener('change', function() {
+                const file = this.files[0];
+                if(file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const id = Date.now();
+                        if(conn) conn.send({type:'image', content:e.target.result, id:id});
+                        addImage(e.target.result, 'sent', id);
+                    };
+                    reader.readAsDataURL(file);
+                }
+                this.value = '';
+            });
+
+            // Movie Player Sync Listeners
+            const vid = document.getElementById('movie-player');
+            vid.addEventListener('play', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'play', time:vid.currentTime}); });
+            vid.addEventListener('pause', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'pause', time:vid.currentTime}); });
+            vid.addEventListener('seeked', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'seek', time:vid.currentTime}); });
+            
+            // Drag Logic for Peer Video
+            makeDraggable(document.getElementById('peer-video-container'));
+        });
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark-mode');
+            localStorage.setItem('theme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
+        }
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
+
+        // --- PEERJS SETUP ---
+        function initApp() {
+            const hash = window.location.hash.substring(1);
+            const peerConfig = { debug: 1, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } };
+            peer = new Peer(undefined, peerConfig);
+
+            peer.on('open', (id) => {
+                myId = id;
+                if (!hash) { // Host
+                    new QRCode(document.getElementById('qrcode'), { text: window.location.href + '#' + id, width: 180, height: 180 });
+                } else { // Joiner
+                    document.getElementById('connect-panel').style.display = 'none';
+                    document.getElementById('connection-status').innerText = 'Connecting...';
+                    setTimeout(() => {
+                        conn = peer.connect(hash);
+                        setupConnection(conn);
+                    }, 1000);
+                    if(window.innerWidth < 768) toggleSidebar();
+                }
+            });
+
+            peer.on('connection', (c) => { setupConnection(c); });
+            
+            // Handle Incoming Calls (Auto-answer for seamless experience)
+            peer.on('call', (call) => {
+                navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
+                    localStream = stream;
+                    document.getElementById('self-video').srcObject = stream;
+                    call.answer(stream);
+                    activeCall = call;
+                    call.on('stream', (remoteStream) => {
+                        document.getElementById('peer-video').srcObject = remoteStream;
+                    });
+                }).catch(e => console.error("Call error", e));
+            });
+        }
+
+        function setupConnection(c) {
+            conn = c;
+            conn.on('open', () => {
+                document.getElementById('status-badge').innerText = 'Connected';
+                document.getElementById('status-badge').style.background = 'var(--green)';
+                document.getElementById('connect-panel').style.display = 'none';
+                document.getElementById('connection-status').innerText = 'Online';
+                if(window.innerWidth < 768) document.getElementById('sidebar').classList.add('hidden');
+            });
+            conn.on('data', handleData);
+            conn.on('close', () => alert("Peer disconnected"));
+        }
+
+        function handleData(data) {
+            switch(data.type) {
+                case 'text': addMessage(data.content, 'received'); document.getElementById('msg-sound').play(); break;
+                case 'image': addImage(data.content, 'received', data.id); document.getElementById('msg-sound').play(); break;
+                case 'sync': handleSync(data); break;
+                case 'file-meta': startReceivingFile(data); break;
+                case 'file-chunk': processFileChunk(data); break;
+            }
+        }
+
+        // --- WATCH PARTY LOGIC ---
+        function startWatchParty(input) {
+            const file = input.files[0];
+            if(!file) return;
+            const url = URL.createObjectURL(file);
+            const vid = document.getElementById('movie-player');
+            vid.src = url;
+            
+            document.getElementById('theater-mode').style.display = 'flex';
+            isTheaterMode = true;
+            
+            // Auto-initiate call for "Always On" experience
+            if(conn && !activeCall) {
+                startCall();
+            }
+            alert("Ensure your partner selects the SAME file!");
+        }
+
+        function exitTheater() {
+            document.getElementById('theater-mode').style.display = 'none';
+            document.getElementById('movie-player').pause();
+            isTheaterMode = false;
+            // Optional: End call on exit? User said "bich me baat kar sake", implying call is tied to movie.
+            // Keeping call active is better UX, but let's provide manual end.
+        }
+
+        function handleSync(data) {
+            const vid = document.getElementById('movie-player');
+            isSyncing = true;
+            if(Math.abs(vid.currentTime - data.time) > 0.5) vid.currentTime = data.time;
+            if(data.action === 'play') vid.play();
+            else if(data.action === 'pause') vid.pause();
+            setTimeout(() => isSyncing = false, 500);
+        }
+
+        // --- CALL LOGIC (Seamless) ---
+        function startCall() {
+            navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
+                localStream = stream;
+                document.getElementById('self-video').srcObject = stream;
+                const call = peer.call(conn.peer, stream);
+                activeCall = call;
+                call.on('stream', (remoteStream) => {
+                    document.getElementById('peer-video').srcObject = remoteStream;
+                });
+            }).catch(e => {
+                console.error("Mic/Cam Error", e);
+                alert("Could not access Camera/Mic. Please allow permissions.");
+            });
+        }
+
+        function toggleMic() {
+            if(localStream) {
+                const track = localStream.getAudioTracks()[0];
+                track.enabled = !track.enabled;
+                document.getElementById('btn-mic').classList.toggle('danger');
+                document.getElementById('btn-mic').innerText = track.enabled ? '🎤' : '🔇';
+            } else {
+                startCall(); // If not started, start it
+            }
+        }
+
+        function toggleCam() {
+            if(localStream) {
+                const track = localStream.getVideoTracks()[0];
+                track.enabled = !track.enabled;
+                document.getElementById('btn-cam').classList.toggle('danger');
+                // Hide self preview if cam off
+                document.getElementById('self-video').style.opacity = track.enabled ? '1' : '0';
+            } else {
+                startCall();
+            }
+        }
+
+        // --- FILE TRANSFER ---
+        let fileQueue = [], activeTransfer = null, isTransferring = false, receiving = {};
+        document.getElementById('file-input').onchange = function() {
+            for(let f of this.files) {
+                const id = Date.now() + Math.random().toString(36).substr(2, 5);
+                fileQueue.push({file:f, id:id});
+                createFileUI(id, f.name, 'Sending');
+            }
+            processFileQueue();
+            this.value = '';
+        };
+
+        function createFileUI(id, name, type) {
+            const div = document.createElement('div'); div.className='transfer-item'; div.id=`file-${id}`;
+            div.innerHTML = `<div class="t-info"><span class="t-name">${name}</span></div><div class="t-bar-bg"><div class="t-bar-fill" id="bar-${id}"></div></div>`;
+            document.getElementById('transfer-list').prepend(div);
+        }
+
+        function processFileQueue() {
+            if(isTransferring || fileQueue.length===0 || !conn) return;
+            const item = fileQueue.shift(); activeTransfer = item; isTransferring = true;
+            conn.send({type:'file-meta', fileId:item.id, name:item.file.name, size:item.file.size});
+            const reader = new FileReader(); let offset=0;
+            reader.onload = (e) => {
+                if(conn) {
+                    conn.send({type:'file-chunk', fileId:item.id, data:e.target.result});
+                    offset += e.target.result.byteLength;
+                    document.getElementById(`bar-${item.id}`).style.width = Math.round((offset/item.file.size)*100)+'%';
+                    if(offset < item.file.size) reader.readAsArrayBuffer(item.file.slice(offset, offset+16384));
+                    else { isTransferring=false; setTimeout(processFileQueue, 50); }
+                }
+            };
+            reader.readAsArrayBuffer(item.file.slice(0, 16384));
+        }
+
+        function startReceivingFile(meta) { receiving[meta.fileId] = {name:meta.name, size:meta.size, received:0, buffer:[]}; createFileUI(meta.fileId, meta.name, 'Receiving'); }
+        function processFileChunk(data) {
+            const f = receiving[data.fileId]; if(!f) return;
+            f.buffer.push(data.data); f.received+=data.data.byteLength;
+            document.getElementById(`bar-${data.fileId}`).style.width = Math.round((f.received/f.size)*100)+'%';
+            if(f.received >= f.size) {
+                const blob = new Blob(f.buffer); const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href=url; a.download=f.name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                delete receiving[data.fileId];
+            }
+        }
+
+        // --- CHAT UI ---
+        function sendText() {
+            const val = document.getElementById('msg-input').value.trim();
+            if(!val || !conn) return;
+            conn.send({type:'text', content:val});
+            addMessage(val, 'sent');
+            document.getElementById('msg-input').value = '';
+        }
+        function addMessage(text, type) {
+            const div = document.createElement('div'); div.className = `msg ${type}`;
+            div.innerText = text;
+            document.getElementById('messages').appendChild(div);
+            document.getElementById('messages').scrollTop = 100000;
+        }
+        function addImage(src, type, id) {
+            const div = document.createElement('div'); div.className = `msg ${type}`;
+            div.innerHTML = `<img src="${src}" onclick="openModal('${src}')">`;
+            document.getElementById('messages').appendChild(div);
+            document.getElementById('messages').scrollTop = 100000;
+        }
+        function openModal(src) { document.getElementById('img-modal').style.display='flex'; document.getElementById('modal-img').src=src; document.getElementById('modal-dl').href=src; }
+
+        // --- QR SCANNER ---
+        let qrScanner;
+        function startScanner() {
+            document.getElementById('scanner-overlay').style.display = 'flex';
+            if(!qrScanner) qrScanner = new Html5Qrcode("qr-reader");
+            qrScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, t => {
+                stopScanner();
+                let id = t.includes('#') ? t.split('#')[1] : t;
+                if(id) { window.location.hash = id; window.location.reload(); }
+            }).catch(e => alert("Camera blocked"));
+        }
+        function stopScanner() { 
+            if(qrScanner) qrScanner.stop().then(()=>document.getElementById('scanner-overlay').style.display='none');
+            else document.getElementById('scanner-overlay').style.display='none';
+        }
+        function shareQRCode() {
+            const canvas = document.querySelector('#qrcode canvas');
+            if(canvas) canvas.toBlob(blob => navigator.share({files:[new File([blob],"qr.png",{type:"image/png"})]}).catch(e=>{}));
+        }
+
+        // --- UTILS ---
+        function makeDraggable(elmnt) {
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            elmnt.onmousedown = dragMouseDown;
+            elmnt.ontouchstart = dragTouchStart;
+
+            function dragMouseDown(e) {
+                e.preventDefault(); pos3 = e.clientX; pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+            function elementDrag(e) {
+                e.preventDefault(); pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
+            function dragTouchStart(e) {
+                pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY;
+                document.ontouchend = closeDragElement;
+                document.ontouchmove = elementTouchDrag;
+            }
+            function elementTouchDrag(e) {
+                pos1 = pos3 - e.touches[0].clientX; pos2 = pos4 - e.touches[0].clientY;
+                pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY;
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
+            function closeDragElement() { document.onmouseup = null; document.onmousemove = null; document.ontouchend = null; document.ontouchmove = null; }
+        }
+    </script>
+</body>
+</html>
