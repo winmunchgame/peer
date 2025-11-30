@@ -179,7 +179,7 @@
     <!-- MX PLAYER STYLE THEATER MODE -->
     <div id="theater-mode">
         <div class="video-wrapper" id="video-wrapper" onclick="toggleControls()">
-            <!-- Main Movie Stream -->
+            <!-- Main Video Element (Acts as Source for Host, and Stream Display for Peer) -->
             <video id="main-video" playsinline></video>
 
             <!-- PiP Videos (User & Peer) -->
@@ -330,28 +330,24 @@
         <a id="modal-dl" style="color:white; margin-top:20px; text-decoration:underline;" download>Download</a>
     </div>
 
-    <!-- HIDDEN VIDEO SOURCE FOR HOST -->
-    <video id="source-video" style="display:none;" playsinline></video>
-
     <script>
         let peer, conn, myId;
         let localStream, activeCall;
-        let isHost = false; // Is this device the one with the file?
+        let isHost = false; 
         let controlsTimeout;
         let isLocked = false;
-        let movieStream = null; // The P2P Video Stream
+        
+        // Track remote peer's duration for UI syncing
+        let peerDuration = 0;
 
-        // Init
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
             if (window.innerWidth < 768) document.querySelector('.mobile-only').style.display = 'block';
             if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
             initApp();
 
-            // Text Input
             document.getElementById('msg-input').addEventListener('keypress', (e) => { if(e.key === 'Enter') sendText(); });
             
-            // Image Input
             document.getElementById('img-input').addEventListener('change', function() {
                 const file = this.files[0];
                 if(file) {
@@ -375,7 +371,6 @@
         }
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
 
-        // --- PEERJS SETUP ---
         function initApp() {
             const hash = window.location.hash.substring(1);
             const peerConfig = { debug: 1, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } };
@@ -383,9 +378,9 @@
 
             peer.on('open', (id) => {
                 myId = id;
-                if (!hash) { // Host (Initial state, changes when file picked)
+                if (!hash) {
                     new QRCode(document.getElementById('qrcode'), { text: window.location.href + '#' + id, width: 180, height: 180 });
-                } else { // Joiner
+                } else {
                     document.getElementById('connect-panel').style.display = 'none';
                     document.getElementById('connection-status').innerText = 'Connecting...';
                     setTimeout(() => {
@@ -398,26 +393,27 @@
 
             peer.on('connection', (c) => { setupConnection(c); });
             
-            // Handle Incoming Calls (Movie Stream OR User Video)
             peer.on('call', (call) => {
                 const type = call.metadata?.type;
                 
                 if (type === 'movie-stream') {
-                    // This is the movie stream!
-                    isHost = false; // I am the viewer
+                    // RECEIVER (Peer B) Logic
+                    isHost = false; 
                     enterTheaterMode();
-                    document.getElementById('host-controls').style.display = 'none'; // Hide open button for peer
+                    document.getElementById('host-controls').style.display = 'none';
                     document.getElementById('movie-title').innerText = "Watching Peer's Movie";
                     
-                    call.answer(); // No need to send stream back for movie
+                    call.answer(); 
                     call.on('stream', (remoteStream) => {
                         const vid = document.getElementById('main-video');
                         vid.srcObject = remoteStream;
-                        vid.play();
+                        // Important: Ensure playing
+                        vid.play().catch(e => console.log("Auto-play blocked", e));
                     });
                 } else {
-                    // This is a Video Call (Face cam)
-                    navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
+                    // Face Call Logic
+                    const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } }; // Low res for PiP is enough
+                    navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
                         localStream = stream;
                         document.getElementById('self-pip').srcObject = stream;
                         call.answer(stream);
@@ -450,89 +446,74 @@
                 case 'file-meta': startReceivingFile(data); break;
                 case 'file-chunk': processFileChunk(data); break;
                 
-                // STREAMING CONTROL SIGNALS
-                case 'stream-sync': // Play/Pause
-                    const srcVid = isHost ? document.getElementById('source-video') : null;
-                    if(isHost && srcVid) {
-                        if(data.action === 'play') srcVid.play();
-                        else if(data.action === 'pause') srcVid.pause();
-                        else if(data.action === 'seek') srcVid.currentTime = data.time;
+                // HOST RECEIVING COMMANDS FROM PEER
+                case 'remote-command': 
+                    if(isHost) {
+                        const vid = document.getElementById('main-video');
+                        if(data.action === 'play') vid.play();
+                        else if(data.action === 'pause') vid.pause();
+                        else if(data.action === 'seek') vid.currentTime = data.time;
                     }
                     break;
-                case 'stream-info': // Progress Update from Host
+                
+                // PEER RECEIVING INFO FROM HOST
+                case 'stream-info': 
                     if(!isHost) {
+                        peerDuration = data.duration;
                         updateProgressUI(data.time, data.duration);
+                        // Also sync play status icon
+                        updatePlayIcon(data.isPlaying);
+                        
+                        // Force sync if lag is huge (e.g. paused vs playing state mismatch)
+                        // Note: We can't force stream time, but we can pause our player if stream stops
+                        const vid = document.getElementById('main-video');
+                        if(!data.isPlaying && !vid.paused) vid.pause();
+                        if(data.isPlaying && vid.paused) vid.play().catch(e=>{});
                     }
                     break;
             }
         }
 
-        // --- HOSTING LOGIC ---
+        // --- HOSTING LOGIC (USER A) ---
         function startHosting(input) {
             const file = input.files[0];
             if(!file) return;
             isHost = true;
             
             const url = URL.createObjectURL(file);
-            const sourceVid = document.getElementById('source-video');
             const mainVid = document.getElementById('main-video');
             
-            sourceVid.src = url;
+            // Host plays the file DIRECTLY
+            mainVid.src = url;
+            mainVid.muted = false; // HOST MUST HEAR AUDIO
             document.getElementById('movie-title').innerText = file.name;
             
-            // Capture Stream from Source Video (Firefox/Chrome support)
-            // Note: captureStream might require the video to be playing or have user interaction
-            sourceVid.onloadedmetadata = () => {
-                try {
-                    // 30 FPS high quality capture
-                    let stream;
-                    if (sourceVid.captureStream) stream = sourceVid.captureStream();
-                    else if (sourceVid.mozCaptureStream) stream = sourceVid.mozCaptureStream();
-                    
-                    if(stream) {
-                        movieStream = stream;
-                        // Call Peer with Movie Stream
-                        if(conn) {
-                            peer.call(conn.peer, stream, {metadata: {type: 'movie-stream'}});
-                        }
-                        // Also show locally
-                        mainVid.srcObject = stream; 
-                        mainVid.muted = true; // Avoid echo for host, they hear sourceVid (wait, sourceVid is hidden)
-                        // Actually, Host watches sourceVid directly? No, easier to watch stream for consistency?
-                        // Better: Host watches sourceVid? No, let's keep sourceVid hidden and play audio.
-                        // We need to hear audio. captureStream captures audio tracks.
-                        // mainVid.srcObject = stream. 
-                        // Issue: captureStream audio might be muted if source is muted.
-                        // Strategy: Host plays sourceVid (hidden), but we need to see it.
-                        // Let's set mainVid to URL for host, but capture from it? No, playing two videos is heavy.
-                        // Best: mainVid IS the source for Host.
-                        mainVid.srcObject = null;
-                        mainVid.src = url;
-                        
-                        // We need to capture from mainVid then? Yes.
-                        mainVid.play(); // User gesture required usually
-                        // Delay capture slightly
-                        setTimeout(() => {
-                            let capStream;
-                            if (mainVid.captureStream) capStream = mainVid.captureStream();
-                            else if (mainVid.mozCaptureStream) capStream = mainVid.mozCaptureStream();
-                            if(conn) peer.call(conn.peer, capStream, {metadata: {type: 'movie-stream'}});
-                        }, 1000);
-                    }
-                } catch(e) {
-                    alert("Browser doesn't support streaming file. Try Chrome/Firefox Desktop.");
+            // Create Stream from the playing video
+            // We use a slight delay to ensure video is ready
+            mainVid.oncanplay = () => {
+                let stream;
+                if (mainVid.captureStream) stream = mainVid.captureStream(30);
+                else if (mainVid.mozCaptureStream) stream = mainVid.mozCaptureStream(30);
+                
+                if(stream && conn) {
+                    peer.call(conn.peer, stream, {metadata: {type: 'movie-stream'}});
                 }
             };
 
             enterTheaterMode();
             
-            // Start Progress Loop
+            // Broadcast Status Loop (Heartbeat)
             setInterval(() => {
                 if(isHost && mainVid && conn) {
+                    conn.send({
+                        type: 'stream-info', 
+                        time: mainVid.currentTime, 
+                        duration: mainVid.duration,
+                        isPlaying: !mainVid.paused
+                    });
                     updateProgressUI(mainVid.currentTime, mainVid.duration);
-                    conn.send({type: 'stream-info', time: mainVid.currentTime, duration: mainVid.duration});
                 }
-            }, 1000);
+            }, 500); // 2Hz update rate
 
             // Auto-start Face Call
             startCall(); 
@@ -545,10 +526,9 @@
 
         function exitTheater() {
             document.getElementById('theater-mode').style.display = 'none';
-            // Stop things? Maybe not, keep playing in background?
-            // Usually exit means stop.
             const vid = document.getElementById('main-video');
             vid.pause();
+            // Optional: Close stream?
         }
 
         // --- PLAYER CONTROLS UI ---
@@ -571,16 +551,15 @@
         }
 
         function togglePlay() {
-            const vid = isHost ? document.getElementById('main-video') : null;
             if(isHost) {
+                const vid = document.getElementById('main-video');
                 if(vid.paused) vid.play(); else vid.pause();
                 updatePlayIcon(!vid.paused);
             } else {
-                // Send Request to Host
+                // Peer sends command to Host
+                // Guess current state from UI icon
                 const isPlaying = document.getElementById('center-play-icon').getAttribute('data-lucide') === 'pause';
-                conn.send({type: 'stream-sync', action: isPlaying ? 'pause' : 'play'});
-                // Optimistic UI update
-                updatePlayIcon(!isPlaying);
+                conn.send({type: 'remote-command', action: isPlaying ? 'pause' : 'play'});
             }
             resetControlsTimer();
         }
@@ -596,9 +575,11 @@
                 const vid = document.getElementById('main-video');
                 vid.currentTime += seconds;
             } else {
-                // We need current time to seek relative. We have it from progress updates.
-                const curr = parseTime(document.getElementById('curr-time').innerText);
-                conn.send({type: 'stream-sync', action: 'seek', time: curr + seconds});
+                // Peer needs to know current time to calculate relative
+                // We rely on the last updated time from UI
+                const currStr = document.getElementById('curr-time').innerText;
+                const curr = parseTime(currStr);
+                conn.send({type: 'remote-command', action: 'seek', time: curr + seconds});
             }
             resetControlsTimer();
         }
@@ -608,35 +589,24 @@
             const rect = bar.getBoundingClientRect();
             const pos = (e.clientX - rect.left) / rect.width;
             
-            // Get total duration from text since we might be peer
-            const durStr = document.getElementById('total-time').innerText;
-            const duration = parseTime(durStr); // Rough estimate
-            
-            // Better: use stored duration variable
-            // For now, let's assume Host handles accuracy
             if(isHost) {
                 const vid = document.getElementById('main-video');
                 vid.currentTime = pos * vid.duration;
             } else {
-                // Peer asks host to seek
-                // Need actual duration. Let's use a global var
-                if(window.lastDuration) {
-                    conn.send({type: 'stream-sync', action: 'seek', time: pos * window.lastDuration});
+                // Peer calculates target time based on total duration (received from host)
+                if(peerDuration > 0) {
+                    const target = pos * peerDuration;
+                    conn.send({type: 'remote-command', action: 'seek', time: target});
                 }
             }
         }
 
         function updateProgressUI(curr, total) {
             if(!total) return;
-            window.lastDuration = total;
             document.getElementById('curr-time').innerText = formatTime(curr);
             document.getElementById('total-time').innerText = formatTime(total);
             const pct = (curr / total) * 100;
             document.getElementById('progress-filled').style.width = pct + '%';
-            
-            // Also sync play icon state
-            const vid = document.getElementById('main-video');
-            if(isHost) updatePlayIcon(!vid.paused);
         }
 
         function formatTime(s) {
@@ -654,7 +624,6 @@
             const vid = document.getElementById('main-video');
             const current = vid.style.objectFit;
             vid.style.objectFit = (current === 'cover') ? 'contain' : (current === 'contain' ? 'fill' : 'cover');
-            // Show toast or message?
         }
 
         function toggleLock() {
@@ -663,33 +632,34 @@
             icon.setAttribute('data-lucide', isLocked ? 'lock' : 'unlock');
             icon.style.color = isLocked ? 'var(--red)' : 'white';
             lucide.createIcons();
-            
-            // If locked, hide controls except lock button? 
-            // For simplicity, lock just prevents auto-hide timeout and maybe drag
             if(!isLocked) resetControlsTimer();
         }
 
         // --- CALL LOGIC ---
         function startCall() {
-            navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
+            const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } };
+            navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
                 localStream = stream;
                 document.getElementById('self-pip').srcObject = stream;
+                
+                // Update theater controls state
+                updateCallButtonsState();
+
                 const call = peer.call(conn.peer, stream);
                 activeCall = call;
                 call.on('stream', (remoteStream) => {
                     document.getElementById('peer-pip').srcObject = remoteStream;
                 });
-            }).catch(e => alert("Please allow Camera/Mic for Video Chat"));
+            }).catch(e => {
+                console.log("Mic/Cam permission needed for call");
+            });
         }
 
         function toggleMic() {
             if(localStream) {
                 const track = localStream.getAudioTracks()[0];
                 track.enabled = !track.enabled;
-                const btn = document.getElementById('tm-mic');
-                btn.classList.toggle('active-red');
-                btn.querySelector('i').setAttribute('data-lucide', track.enabled ? 'mic' : 'mic-off');
-                lucide.createIcons();
+                updateCallButtonsState();
             } else startCall();
         }
 
@@ -697,12 +667,26 @@
             if(localStream) {
                 const track = localStream.getVideoTracks()[0];
                 track.enabled = !track.enabled;
-                const btn = document.getElementById('tm-cam');
-                btn.classList.toggle('active-red');
-                btn.querySelector('i').setAttribute('data-lucide', track.enabled ? 'camera' : 'camera-off');
-                lucide.createIcons();
                 document.getElementById('self-pip').style.opacity = track.enabled ? '1' : '0';
+                updateCallButtonsState();
             } else startCall();
+        }
+
+        function updateCallButtonsState() {
+            if(!localStream) return;
+            const micOn = localStream.getAudioTracks()[0].enabled;
+            const camOn = localStream.getVideoTracks()[0].enabled;
+            
+            const micBtn = document.getElementById('tm-mic');
+            const camBtn = document.getElementById('tm-cam');
+            
+            micBtn.classList.toggle('active-red', !micOn);
+            micBtn.querySelector('i').setAttribute('data-lucide', micOn ? 'mic' : 'mic-off');
+            
+            camBtn.classList.toggle('active-red', !camOn);
+            camBtn.querySelector('i').setAttribute('data-lucide', camOn ? 'camera' : 'camera-off');
+            
+            lucide.createIcons();
         }
 
         // --- CHAT & FILE LOGIC ---
