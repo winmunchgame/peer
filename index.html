@@ -64,14 +64,12 @@
         .messages { flex-grow: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
         .msg { max-width: 75%; padding: 8px 12px; border-radius: 8px; font-size: 14px; position: relative; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); word-break: break-word; color: var(--text); }
         
-        /* FIXED CSS BUG HERE: Removed JS syntax (ternary operator) from CSS */
         .msg.sent { 
             align-self: flex-end; 
             background: var(--msg-sent); 
             color: var(--text); 
         }
         
-        /* Specific overrides for sent messages to ensure contrast */
         body.dark-mode .msg.sent { color: #e9edef; }
         body:not(.dark-mode) .msg.sent { color: #000; }
 
@@ -331,6 +329,11 @@
         let isLocked = false;
         let peerDuration = 0;
         let canvasInterval;
+        
+        // --- Web Audio API Globals ---
+        let audioCtx;
+        let audioSourceNode;
+        let audioDestNode;
 
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
@@ -464,9 +467,32 @@
             const canvas = document.getElementById('stream-canvas');
             const ctx = canvas.getContext('2d');
             
+            // --- FIX: Setup Web Audio API only once ---
+            if (!audioCtx) {
+                try {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    // Connect video element to Audio Context
+                    audioSourceNode = audioCtx.createMediaElementSource(mainVid);
+                    // Destination for Stream (Peer hears this)
+                    audioDestNode = audioCtx.createMediaStreamDestination();
+                    
+                    // Routing:
+                    // 1. Source -> Destination (Stream)
+                    audioSourceNode.connect(audioDestNode);
+                    // 2. Source -> Local Speakers (Host hears this)
+                    audioSourceNode.connect(audioCtx.destination);
+                } catch(e) {
+                    console.error("Audio Context Setup Error:", e);
+                }
+            }
+            if(audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
             mainVid.srcObject = null;
             mainVid.src = url;
-            mainVid.muted = false; // Host hears audio
+            // Note: Don't set muted=true, we handle local audio via audioCtx.destination
+            
             document.getElementById('movie-title').innerText = file.name;
             document.getElementById('host-controls').style.display = 'flex';
             
@@ -489,21 +515,13 @@
                     }
                 }, 1000 / 24); // 24 FPS lock
 
-                // Capture stream from canvas
+                // Capture stream from canvas (Video Only)
                 const canvasStream = canvas.captureStream(24);
                 
-                // Add Audio Track from Video (Important!)
-                let audioStream;
-                try {
-                    if(mainVid.captureStream) audioStream = mainVid.captureStream();
-                    else if(mainVid.mozCaptureStream) audioStream = mainVid.mozCaptureStream();
-                } catch(e) {
-                    console.warn("Audio capture not supported on this browser/file type", e);
-                }
+                // Get Audio Track from Web Audio API Destination
+                const audioTrack = audioDestNode ? audioDestNode.stream.getAudioTracks()[0] : null;
                 
-                const audioTrack = audioStream ? audioStream.getAudioTracks()[0] : null;
-                
-                // Combine Video(Canvas) + Audio(VideoElement)
+                // Combine Video(Canvas) + Audio(Web Audio API)
                 const finalStream = new MediaStream();
                 canvasStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
                 if(audioTrack) finalStream.addTrack(audioTrack);
