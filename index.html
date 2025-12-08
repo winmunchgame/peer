@@ -1,22 +1,21 @@
- <!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>QR Send - Stream & Watch</title>
+    <title>QR Send - Watch Party Edition</title>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; -webkit-tap-highlight-color: transparent; }
         :root {
             --primary: #075e54; --secondary: #128c7e; --bg: #e5ddd5; --white: #ffffff;
             --text: #000000; --msg-sent: #dcf8c6; --msg-recv: #ffffff; --border: #ddd;
-            --red: #ff4b4b; --green: #25d366; --blue: #3498db; --overlay-bg: rgba(0,0,0,0.7);
+            --red: #d32f2f; --green: #25d366; --black: #000000;
         }
         body.dark-mode {
             --primary: #1f2c34; --secondary: #00af9c; --bg: #0b141a; --white: #111b21;
@@ -36,16 +35,15 @@
         .btn-primary { background: var(--secondary); color: white; }
         .btn-outline { border: 1px solid var(--secondary); color: var(--secondary); background: transparent; }
         
-        /* STREAM BUTTON */
-        .stream-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; width: 90%; padding: 15px; border-radius: 12px; border: none;
-            font-size: 16px; font-weight: bold; cursor: pointer; margin: 15px auto;
+        /* WATCH PARTY BUTTON */
+        .watch-party-btn {
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
+            color: white; width: 90%; padding: 15px; border-radius: 10px; border: none;
+            font-size: 16px; font-weight: bold; cursor: pointer; margin: 10px auto;
             display: flex; align-items: center; justify-content: center; gap: 10px;
-            box-shadow: 0 4px 15px rgba(118, 75, 162, 0.4); 
-            transition: transform 0.2s;
+            box-shadow: 0 4px 15px rgba(255, 75, 43, 0.3); animation: pulse-btn 2s infinite;
         }
-        .stream-btn:active { transform: scale(0.98); }
+        @keyframes pulse-btn { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
 
         /* FILES */
         .files-panel { padding: 15px; background: var(--white); border-top: 1px solid var(--border); display: flex; flex-direction: column; flex-grow: 1; min-height: 0; max-height: 50%; }
@@ -69,170 +67,118 @@
         #msg-input { flex-grow: 1; padding: 12px; border: none; border-radius: 20px; outline: none; font-size: 15px; background: var(--bg); color: var(--text); }
         .send-btn { background: var(--secondary); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-        /* --- MX PLAYER STYLE THEATER MODE --- */
+        /* --- THEATER MODE (WATCH PARTY) --- */
         #theater-mode {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: #000; z-index: 5000; display: none;
-            flex-direction: column; overflow: hidden;
+            flex-direction: column;
         }
         
-        .video-wrapper {
-            position: relative; width: 100%; height: 100%;
-            display: flex; align-items: center; justify-content: center;
-            background: #000;
+        .theater-content {
+            flex-grow: 1; position: relative; display: flex; 
+            align-items: center; justify-content: center; width: 100%; height: 100%;
         }
 
-        #main-video {
-            width: 100%; height: 100%;
+        /* The Movie Player */
+        video.movie-player {
+            width: 100%; height: 100%; max-height: 100vh;
             object-fit: contain;
-            transition: object-fit 0.3s ease;
         }
 
-        .controls-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 20%, rgba(0,0,0,0) 80%, rgba(0,0,0,0.8) 100%);
-            display: flex; flex-direction: column; justify-content: space-between;
-            opacity: 1; transition: opacity 0.3s;
-            pointer-events: none;
+        /* Floating Peer Video (PiP) */
+        .peer-pip {
+            position: absolute; top: 20px; right: 20px;
+            width: 150px; height: 200px;
+            background: #333; border: 2px solid #fff;
+            border-radius: 10px; overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            cursor: move; z-index: 5002;
+            transition: width 0.2s, height 0.2s;
         }
-        .controls-overlay.hidden { opacity: 0; }
-        .controls-overlay > * { pointer-events: auto; }
+        .peer-pip video { width: 100%; height: 100%; object-fit: cover; }
+        .peer-pip.enlarged { width: 300px; height: 400px; }
 
-        .player-top {
-            padding: 20px; display: flex; justify-content: space-between; align-items: center; color: white;
+        /* Self Video (Small) */
+        .self-pip {
+            position: absolute; bottom: 80px; right: 20px;
+            width: 80px; height: 100px;
+            background: #222; border: 1px solid #fff;
+            border-radius: 8px; overflow: hidden; z-index: 5003;
         }
-        .movie-title { font-size: 16px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+        .self-pip video { width: 100%; height: 100%; object-fit: cover; }
 
-        .player-center {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            display: flex; gap: 40px; align-items: center;
+        /* Theater Controls */
+        .theater-controls {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: linear-gradient(transparent, rgba(0,0,0,0.9));
+            padding: 20px; display: flex; align-items: center; justify-content: space-between;
+            z-index: 5004; opacity: 0; transition: opacity 0.3s;
         }
-        .center-btn {
-            background: rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.3);
-            color: white; border-radius: 50%; width: 60px; height: 60px;
-            display: flex; align-items: center; justify-content: center; cursor: pointer;
-            backdrop-filter: blur(5px); transition: 0.2s;
-        }
-        .center-btn:active { transform: scale(0.9); background: rgba(255,255,255,0.2); }
-        .play-pause-lg { width: 80px; height: 80px; background: rgba(0,0,0,0.6); border-color: white; }
+        #theater-mode:hover .theater-controls { opacity: 1; }
 
-        .player-bottom { padding: 20px; color: white; display: flex; flex-direction: column; gap: 10px; }
+        .control-group { display: flex; gap: 15px; align-items: center; }
+        .t-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 10px; border-radius: 50%; cursor: pointer; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: 0.2s; }
+        .t-btn:hover { background: rgba(255,255,255,0.4); }
+        .t-btn.active { background: var(--green); }
+        .t-btn.danger { background: var(--red); }
+
+        /* General Overlays */
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 4000; display: none; flex-direction: column; align-items: center; justify-content: center; color: white; }
         
-        .progress-container { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-        .progress-bar {
-            flex-grow: 1; height: 5px; background: rgba(255,255,255,0.3);
-            border-radius: 5px; cursor: pointer; position: relative;
-        }
-        .progress-filled {
-            height: 100%; background: var(--blue); border-radius: 5px; width: 0%;
-            position: relative;
-        }
-        .progress-thumb {
-            width: 12px; height: 12px; background: white; border-radius: 50%;
-            position: absolute; right: -6px; top: -3.5px; box-shadow: 0 0 5px rgba(0,0,0,0.5);
-        }
+        #scanner-overlay { background: black; display: none; }
+        #qr-reader { width: 100%; max-width: 500px; }
+        .close-overlay { position: absolute; top: 20px; right: 20px; font-size: 30px; color: white; cursor: pointer; z-index: 4002; }
 
-        .control-row { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
-        .btn-group { display: flex; gap: 20px; align-items: center; }
-        .player-icon-btn { background: none; border: none; color: white; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; opacity: 0.8; transition: 0.2s; }
-        .player-icon-btn:hover { opacity: 1; }
-        .player-icon-btn svg { width: 24px; height: 24px; }
-        .player-icon-btn.active { color: var(--green); }
-        .player-icon-btn.active-red { color: var(--red); }
-
-        .pip-wrapper {
-            position: absolute; top: 70px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 5005;
-        }
-        .pip-video {
-            width: 100px; height: 140px; background: #333; border: 2px solid rgba(255,255,255,0.5);
-            border-radius: 12px; object-fit: cover; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            transition: all 0.3s; cursor: move;
-        }
-        .pip-video.hidden { opacity: 0; pointer-events: none; height: 0; border: none; }
-
+        /* Mobile Responsive */
         @media (max-width: 768px) {
             .app-container { flex-direction: column; }
             .sidebar { width: 100%; height: 100%; position: absolute; transform: translateX(0); }
             .sidebar.hidden { transform: translateX(-100%); }
             .mobile-only { display: block; }
-            .pip-video { width: 80px; height: 110px; }
-            .player-center { gap: 20px; }
-            .center-btn { width: 50px; height: 50px; }
-            .play-pause-lg { width: 65px; height: 65px; }
+            .peer-pip { width: 100px; height: 140px; top: 10px; right: 10px; }
+            .self-pip { width: 60px; height: 80px; bottom: 70px; right: 10px; }
+            .theater-controls { padding: 10px; flex-wrap: wrap; justify-content: center; }
         }
     </style>
 </head>
 
 <body>
+    <!-- NOTIFICATION SOUND -->
     <audio id="msg-sound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"></audio>
 
-    <!-- MX PLAYER STYLE THEATER MODE -->
+    <!-- THEATER MODE (WATCH PARTY UI) -->
     <div id="theater-mode">
-        <div class="video-wrapper" id="video-wrapper" onclick="toggleControls()">
-            <!-- Main Video Element (Source for Host, Stream for Peer) -->
-            <video id="main-video" playsinline></video>
-
-            <!-- PiP Videos (User & Peer) -->
-            <div class="pip-wrapper" id="pip-wrapper">
-                <video id="peer-pip" class="pip-video" autoplay playsinline></video>
-                <video id="self-pip" class="pip-video" autoplay playsinline muted></video>
+        <div class="theater-content">
+            <!-- Main Movie -->
+            <video id="movie-player" class="movie-player" playsinline></video>
+            
+            <!-- Peer Video (Draggable) -->
+            <div id="peer-video-container" class="peer-pip">
+                <video id="peer-video" autoplay playsinline></video>
             </div>
 
-            <!-- Controls Overlay -->
-            <div class="controls-overlay" id="controls-overlay" onclick="event.stopPropagation()">
-                <div class="player-top">
-                    <button class="player-icon-btn" onclick="exitTheater()">
-                        <i data-lucide="arrow-left"></i>
-                    </button>
-                    <span class="movie-title" id="movie-title">Live Stream</span>
-                    <div class="btn-group">
-                        <button class="player-icon-btn" onclick="toggleFit()" title="Screen Fit">
-                            <i data-lucide="maximize"></i>
-                        </button>
-                        <button class="player-icon-btn" onclick="toggleLock()" title="Lock Controls">
-                            <i data-lucide="lock" id="lock-icon"></i>
-                        </button>
-                    </div>
+            <!-- Self Video -->
+            <div class="self-pip">
+                <video id="self-video" autoplay playsinline muted></video>
+            </div>
+
+            <!-- Controls -->
+            <div class="theater-controls">
+                <div class="control-group">
+                    <button class="t-btn danger" onclick="exitTheater()" title="Exit Watch Party">✕</button>
+                    <span style="color:white; font-weight:bold; font-size:14px;">🎬 Watch Party</span>
                 </div>
 
-                <div class="player-center" id="center-controls">
-                    <button class="center-btn" onclick="seekRelative(-10)">
-                        <i data-lucide="rotate-ccw"></i>
-                    </button>
-                    <button class="center-btn play-pause-lg" onclick="togglePlay()">
-                        <i data-lucide="play" id="center-play-icon"></i>
-                    </button>
-                    <button class="center-btn" onclick="seekRelative(10)">
-                        <i data-lucide="rotate-cw"></i>
-                    </button>
+                <!-- Sync Controls (Play/Pause are handled by video element, these are for extra actions) -->
+                <div class="control-group" style="color:#aaa; font-size:12px;">
+                    <span id="sync-status">Synced</span>
                 </div>
 
-                <div class="player-bottom" id="bottom-controls">
-                    <div class="progress-container">
-                        <span id="curr-time">00:00</span>
-                        <div class="progress-bar" id="progress-bar" onclick="seekTo(event)">
-                            <div class="progress-filled" id="progress-filled">
-                                <div class="progress-thumb"></div>
-                            </div>
-                        </div>
-                        <span id="total-time">00:00</span>
-                    </div>
-
-                    <div class="control-row">
-                        <div class="btn-group">
-                            <button id="tm-mic" class="player-icon-btn" onclick="toggleMic()">
-                                <i data-lucide="mic"></i><span>Mic</span>
-                            </button>
-                            <button id="tm-cam" class="player-icon-btn" onclick="toggleCam()">
-                                <i data-lucide="camera"></i><span>Cam</span>
-                            </button>
-                        </div>
-                        <div class="btn-group" id="host-controls">
-                            <button class="player-icon-btn" onclick="document.getElementById('movie-file').click()">
-                                <i data-lucide="folder-open"></i><span>Open</span>
-                            </button>
-                        </div>
-                    </div>
+                <!-- Call Controls -->
+                <div class="control-group">
+                    <button id="btn-mic" class="t-btn" onclick="toggleMic()" title="Toggle Mic">🎤</button>
+                    <button id="btn-cam" class="t-btn" onclick="toggleCam()" title="Toggle Camera">📷</button>
+                    <button class="t-btn" onclick="document.getElementById('movie-file').click()" title="Change Movie">📂</button>
                 </div>
             </div>
         </div>
@@ -240,6 +186,7 @@
 
     <!-- MAIN APP -->
     <div class="app-container">
+        <!-- SIDEBAR -->
         <div class="sidebar" id="sidebar">
             <div class="header">
                 <div style="display:flex; align-items:center;">
@@ -261,10 +208,11 @@
                 </div>
             </div>
 
-            <button class="stream-btn" onclick="document.getElementById('movie-file').click()">
-                <i data-lucide="tv-2"></i> Stream Movie Party
+            <!-- WATCH PARTY START BUTTON -->
+            <button class="watch-party-btn" onclick="document.getElementById('movie-file').click()">
+                <span>🎬</span> Start Watch Party
             </button>
-            <input type="file" id="movie-file" accept="video/*, .mkv, .mp4" style="display:none" onchange="startHosting(this)">
+            <input type="file" id="movie-file" accept="video/*, .mkv, .mp4" style="display:none" onchange="startWatchParty(this)">
 
             <div class="files-panel" id="files-panel">
                 <div class="files-header">
@@ -276,6 +224,7 @@
             </div>
         </div>
 
+        <!-- CHAT AREA -->
         <div class="chat-area" id="chat-area">
             <div class="chat-header">
                 <div class="chat-user">
@@ -286,7 +235,9 @@
                     </div>
                 </div>
             </div>
+
             <div class="messages" id="messages"></div>
+
             <div class="input-area">
                 <button class="btn" style="background:none; color:var(--secondary); padding:5px;" onclick="document.getElementById('img-input').click()">📷</button>
                 <input type="file" id="img-input" accept="image/*" style="display:none">
@@ -297,38 +248,34 @@
     </div>
 
     <!-- SCANNER OVERLAY -->
-    <div id="scanner-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:black; z-index:4000; display:none; flex-direction:column;">
-        <div style="position:absolute; top:20px; right:20px; font-size:30px; color:white; cursor:pointer;" onclick="stopScanner()">✕</div>
-        <div id="qr-reader" style="width:100%; flex-grow:1;"></div>
+    <div id="scanner-overlay" class="overlay">
+        <div class="close-overlay" onclick="stopScanner()">✕</div>
+        <div id="qr-reader"></div>
     </div>
 
     <!-- IMAGE MODAL -->
-    <div id="img-modal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:4000; display:none; justify-content:center; align-items:center; flex-direction:column;">
-        <div style="position:absolute; top:20px; right:20px; font-size:30px; color:white; cursor:pointer;" onclick="document.getElementById('img-modal').style.display='none'">✕</div>
-        <img id="modal-img" style="max-width:90%; max-height:80%; border-radius:8px;">
+    <div id="img-modal" class="overlay" style="background:rgba(0,0,0,0.9);">
+        <div class="close-overlay" onclick="document.getElementById('img-modal').style.display='none'">✕</div>
+        <img id="modal-img" style="max-width:90%; max-height:80%;">
         <a id="modal-dl" style="color:white; margin-top:20px; text-decoration:underline;" download>Download</a>
     </div>
-
-    <!-- HIDDEN CANVAS FOR PROCESSING -->
-    <canvas id="stream-canvas" style="display:none;"></canvas>
 
     <script>
         let peer, conn, myId;
         let localStream, activeCall;
-        let isHost = false; 
-        let controlsTimeout;
-        let isLocked = false;
-        let peerDuration = 0;
-        let canvasInterval;
+        let isSyncing = false;
+        let isTheaterMode = false;
 
+        // Init
         document.addEventListener('DOMContentLoaded', () => {
-            lucide.createIcons();
             if (window.innerWidth < 768) document.querySelector('.mobile-only').style.display = 'block';
             if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
             initApp();
 
+            // Text Input
             document.getElementById('msg-input').addEventListener('keypress', (e) => { if(e.key === 'Enter') sendText(); });
             
+            // Image Input
             document.getElementById('img-input').addEventListener('change', function() {
                 const file = this.files[0];
                 if(file) {
@@ -343,7 +290,14 @@
                 this.value = '';
             });
 
-            makeDraggable(document.getElementById('pip-wrapper'));
+            // Movie Player Sync Listeners
+            const vid = document.getElementById('movie-player');
+            vid.addEventListener('play', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'play', time:vid.currentTime}); });
+            vid.addEventListener('pause', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'pause', time:vid.currentTime}); });
+            vid.addEventListener('seeked', () => { if(conn && !isSyncing) conn.send({type:'sync', action:'seek', time:vid.currentTime}); });
+            
+            // Drag Logic for Peer Video
+            makeDraggable(document.getElementById('peer-video-container'));
         });
 
         function toggleTheme() {
@@ -352,6 +306,7 @@
         }
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
 
+        // --- PEERJS SETUP ---
         function initApp() {
             const hash = window.location.hash.substring(1);
             const peerConfig = { debug: 1, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } };
@@ -359,9 +314,9 @@
 
             peer.on('open', (id) => {
                 myId = id;
-                if (!hash) {
+                if (!hash) { // Host
                     new QRCode(document.getElementById('qrcode'), { text: window.location.href + '#' + id, width: 180, height: 180 });
-                } else {
+                } else { // Joiner
                     document.getElementById('connect-panel').style.display = 'none';
                     document.getElementById('connection-status').innerText = 'Connecting...';
                     setTimeout(() => {
@@ -374,33 +329,17 @@
 
             peer.on('connection', (c) => { setupConnection(c); });
             
+            // Handle Incoming Calls (Auto-answer for seamless experience)
             peer.on('call', (call) => {
-                const type = call.metadata?.type;
-                
-                if (type === 'movie-stream') {
-                    isHost = false; 
-                    enterTheaterMode();
-                    document.getElementById('host-controls').style.display = 'none';
-                    document.getElementById('movie-title').innerText = "Watching Peer's Movie";
-                    
-                    call.answer(); 
+                navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
+                    localStream = stream;
+                    document.getElementById('self-video').srcObject = stream;
+                    call.answer(stream);
+                    activeCall = call;
                     call.on('stream', (remoteStream) => {
-                        const vid = document.getElementById('main-video');
-                        vid.srcObject = remoteStream;
-                        vid.play().catch(e => console.log("Auto-play blocked", e));
+                        document.getElementById('peer-video').srcObject = remoteStream;
                     });
-                } else {
-                    const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } };
-                    navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
-                        localStream = stream;
-                        document.getElementById('self-pip').srcObject = stream;
-                        call.answer(stream);
-                        activeCall = call;
-                        call.on('stream', (remoteStream) => {
-                            document.getElementById('peer-pip').srcObject = remoteStream;
-                        });
-                    }).catch(e => console.error("Call error", e));
-                }
+                }).catch(e => console.error("Call error", e));
             });
         }
 
@@ -421,221 +360,60 @@
             switch(data.type) {
                 case 'text': addMessage(data.content, 'received'); document.getElementById('msg-sound').play(); break;
                 case 'image': addImage(data.content, 'received', data.id); document.getElementById('msg-sound').play(); break;
+                case 'sync': handleSync(data); break;
                 case 'file-meta': startReceivingFile(data); break;
                 case 'file-chunk': processFileChunk(data); break;
-                
-                case 'remote-command': 
-                    if(isHost) {
-                        const vid = document.getElementById('main-video');
-                        if(data.action === 'play') vid.play();
-                        else if(data.action === 'pause') vid.pause();
-                        else if(data.action === 'seek') vid.currentTime = data.time;
-                    }
-                    break;
-                
-                case 'stream-info': 
-                    if(!isHost) {
-                        peerDuration = data.duration;
-                        updateProgressUI(data.time, data.duration);
-                        updatePlayIcon(data.isPlaying);
-                    }
-                    break;
             }
         }
 
-        function startHosting(input) {
+        // --- WATCH PARTY LOGIC ---
+        function startWatchParty(input) {
             const file = input.files[0];
             if(!file) return;
-            isHost = true;
-            
             const url = URL.createObjectURL(file);
-            const mainVid = document.getElementById('main-video');
-            const canvas = document.getElementById('stream-canvas');
-            const ctx = canvas.getContext('2d');
+            const vid = document.getElementById('movie-player');
+            vid.src = url;
             
-            mainVid.srcObject = null;
-            mainVid.src = url;
-            mainVid.muted = false; // Host hears audio
-            document.getElementById('movie-title').innerText = file.name;
-            
-            enterTheaterMode();
-
-            mainVid.onloadedmetadata = () => {
-                // Set optimized streaming resolution (Max 720p width)
-                const scale = Math.min(1, 1280 / mainVid.videoWidth);
-                canvas.width = mainVid.videoWidth * scale;
-                canvas.height = mainVid.videoHeight * scale;
-                
-                mainVid.play();
-                
-                // Start drawing to canvas
-                clearInterval(canvasInterval);
-                canvasInterval = setInterval(() => {
-                    if(!mainVid.paused && !mainVid.ended) {
-                        ctx.drawImage(mainVid, 0, 0, canvas.width, canvas.height);
-                    }
-                }, 1000 / 24); // 24 FPS lock
-
-                // Capture stream from canvas
-                const canvasStream = canvas.captureStream(24);
-                
-                // Add Audio Track from Video (Important!)
-                // Check if captureStream supports audio, if not we need web audio api
-                // video.captureStream() works best for audio preservation
-                let audioStream;
-                if(mainVid.captureStream) audioStream = mainVid.captureStream();
-                else if(mainVid.mozCaptureStream) audioStream = mainVid.mozCaptureStream();
-                
-                const audioTrack = audioStream ? audioStream.getAudioTracks()[0] : null;
-                
-                // Combine Video(Canvas) + Audio(VideoElement)
-                const finalStream = new MediaStream();
-                canvasStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
-                if(audioTrack) finalStream.addTrack(audioTrack);
-                
-                if(conn) {
-                    peer.call(conn.peer, finalStream, {metadata: {type: 'movie-stream'}});
-                }
-            };
-            
-            setInterval(() => {
-                if(isHost && mainVid && conn) {
-                    conn.send({
-                        type: 'stream-info', 
-                        time: mainVid.currentTime, 
-                        duration: mainVid.duration,
-                        isPlaying: !mainVid.paused
-                    });
-                    updateProgressUI(mainVid.currentTime, mainVid.duration);
-                }
-            }, 500);
-
-            startCall(); 
-        }
-
-        function enterTheaterMode() {
             document.getElementById('theater-mode').style.display = 'flex';
-            resetControlsTimer();
+            isTheaterMode = true;
+            
+            // Auto-initiate call for "Always On" experience
+            if(conn && !activeCall) {
+                startCall();
+            }
+            alert("Ensure your partner selects the SAME file!");
         }
 
         function exitTheater() {
             document.getElementById('theater-mode').style.display = 'none';
-            const vid = document.getElementById('main-video');
-            vid.pause();
-            clearInterval(canvasInterval);
+            document.getElementById('movie-player').pause();
+            isTheaterMode = false;
+            // Optional: End call on exit? User said "bich me baat kar sake", implying call is tied to movie.
+            // Keeping call active is better UX, but let's provide manual end.
         }
 
-        function toggleControls() {
-            if(isLocked) return;
-            const overlay = document.getElementById('controls-overlay');
-            if(overlay.classList.contains('hidden')) {
-                overlay.classList.remove('hidden');
-                resetControlsTimer();
-            } else {
-                overlay.classList.add('hidden');
-            }
+        function handleSync(data) {
+            const vid = document.getElementById('movie-player');
+            isSyncing = true;
+            if(Math.abs(vid.currentTime - data.time) > 0.5) vid.currentTime = data.time;
+            if(data.action === 'play') vid.play();
+            else if(data.action === 'pause') vid.pause();
+            setTimeout(() => isSyncing = false, 500);
         }
 
-        function resetControlsTimer() {
-            clearTimeout(controlsTimeout);
-            controlsTimeout = setTimeout(() => {
-                if(!isLocked) document.getElementById('controls-overlay').classList.add('hidden');
-            }, 3000);
-        }
-
-        function togglePlay() {
-            if(isHost) {
-                const vid = document.getElementById('main-video');
-                if(vid.paused) vid.play(); else vid.pause();
-                updatePlayIcon(!vid.paused);
-            } else {
-                const isPlaying = document.getElementById('center-play-icon').getAttribute('data-lucide') === 'pause';
-                conn.send({type: 'remote-command', action: isPlaying ? 'pause' : 'play'});
-            }
-            resetControlsTimer();
-        }
-
-        function updatePlayIcon(isPlaying) {
-            const icon = document.getElementById('center-play-icon');
-            icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play');
-            lucide.createIcons();
-        }
-
-        function seekRelative(seconds) {
-            if(isHost) {
-                const vid = document.getElementById('main-video');
-                vid.currentTime += seconds;
-            } else {
-                const currStr = document.getElementById('curr-time').innerText;
-                const curr = parseTime(currStr);
-                conn.send({type: 'remote-command', action: 'seek', time: curr + seconds});
-            }
-            resetControlsTimer();
-        }
-
-        function seekTo(e) {
-            const bar = document.getElementById('progress-bar');
-            const rect = bar.getBoundingClientRect();
-            const pos = (e.clientX - rect.left) / rect.width;
-            
-            if(isHost) {
-                const vid = document.getElementById('main-video');
-                vid.currentTime = pos * vid.duration;
-            } else {
-                if(peerDuration > 0) {
-                    const target = pos * peerDuration;
-                    conn.send({type: 'remote-command', action: 'seek', time: target});
-                }
-            }
-        }
-
-        function updateProgressUI(curr, total) {
-            if(!total) return;
-            document.getElementById('curr-time').innerText = formatTime(curr);
-            document.getElementById('total-time').innerText = formatTime(total);
-            const pct = (curr / total) * 100;
-            document.getElementById('progress-filled').style.width = pct + '%';
-        }
-
-        function formatTime(s) {
-            if(!s) return "00:00";
-            const m = Math.floor(s / 60);
-            const sec = Math.floor(s % 60);
-            return `${m}:${sec < 10 ? '0'+sec : sec}`;
-        }
-        function parseTime(str) {
-            const p = str.split(':');
-            return parseInt(p[0])*60 + parseInt(p[1]);
-        }
-
-        function toggleFit() {
-            const vid = document.getElementById('main-video');
-            const current = vid.style.objectFit;
-            vid.style.objectFit = (current === 'cover') ? 'contain' : (current === 'contain' ? 'fill' : 'cover');
-        }
-
-        function toggleLock() {
-            isLocked = !isLocked;
-            const icon = document.getElementById('lock-icon');
-            icon.setAttribute('data-lucide', isLocked ? 'lock' : 'unlock');
-            icon.style.color = isLocked ? 'var(--red)' : 'white';
-            lucide.createIcons();
-            if(!isLocked) resetControlsTimer();
-        }
-
+        // --- CALL LOGIC (Seamless) ---
         function startCall() {
-            const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } };
-            navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
+            navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(stream => {
                 localStream = stream;
-                document.getElementById('self-pip').srcObject = stream;
-                updateCallButtonsState();
+                document.getElementById('self-video').srcObject = stream;
                 const call = peer.call(conn.peer, stream);
                 activeCall = call;
                 call.on('stream', (remoteStream) => {
-                    document.getElementById('peer-pip').srcObject = remoteStream;
+                    document.getElementById('peer-video').srcObject = remoteStream;
                 });
             }).catch(e => {
-                console.log("Mic/Cam permission needed for call");
+                console.error("Mic/Cam Error", e);
+                alert("Could not access Camera/Mic. Please allow permissions.");
             });
         }
 
@@ -643,36 +421,26 @@
             if(localStream) {
                 const track = localStream.getAudioTracks()[0];
                 track.enabled = !track.enabled;
-                updateCallButtonsState();
-            } else startCall();
+                document.getElementById('btn-mic').classList.toggle('danger');
+                document.getElementById('btn-mic').innerText = track.enabled ? '🎤' : '🔇';
+            } else {
+                startCall(); // If not started, start it
+            }
         }
 
         function toggleCam() {
             if(localStream) {
                 const track = localStream.getVideoTracks()[0];
                 track.enabled = !track.enabled;
-                document.getElementById('self-pip').style.opacity = track.enabled ? '1' : '0';
-                updateCallButtonsState();
-            } else startCall();
+                document.getElementById('btn-cam').classList.toggle('danger');
+                // Hide self preview if cam off
+                document.getElementById('self-video').style.opacity = track.enabled ? '1' : '0';
+            } else {
+                startCall();
+            }
         }
 
-        function updateCallButtonsState() {
-            if(!localStream) return;
-            const micOn = localStream.getAudioTracks()[0].enabled;
-            const camOn = localStream.getVideoTracks()[0].enabled;
-            
-            const micBtn = document.getElementById('tm-mic');
-            const camBtn = document.getElementById('tm-cam');
-            
-            micBtn.classList.toggle('active-red', !micOn);
-            micBtn.querySelector('i').setAttribute('data-lucide', micOn ? 'mic' : 'mic-off');
-            
-            camBtn.classList.toggle('active-red', !camOn);
-            camBtn.querySelector('i').setAttribute('data-lucide', camOn ? 'camera' : 'camera-off');
-            
-            lucide.createIcons();
-        }
-
+        // --- FILE TRANSFER ---
         let fileQueue = [], activeTransfer = null, isTransferring = false, receiving = {};
         document.getElementById('file-input').onchange = function() {
             for(let f of this.files) {
@@ -719,6 +487,7 @@
             }
         }
 
+        // --- CHAT UI ---
         function sendText() {
             const val = document.getElementById('msg-input').value.trim();
             if(!val || !conn) return;
@@ -740,6 +509,7 @@
         }
         function openModal(src) { document.getElementById('img-modal').style.display='flex'; document.getElementById('modal-img').src=src; document.getElementById('modal-dl').href=src; }
 
+        // --- QR SCANNER ---
         let qrScanner;
         function startScanner() {
             document.getElementById('scanner-overlay').style.display = 'flex';
@@ -759,14 +529,34 @@
             if(canvas) canvas.toBlob(blob => navigator.share({files:[new File([blob],"qr.png",{type:"image/png"})]}).catch(e=>{}));
         }
 
+        // --- UTILS ---
         function makeDraggable(elmnt) {
             let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
             elmnt.onmousedown = dragMouseDown;
             elmnt.ontouchstart = dragTouchStart;
-            function dragMouseDown(e) { e.preventDefault(); pos3 = e.clientX; pos4 = e.clientY; document.onmouseup = closeDragElement; document.onmousemove = elementDrag; }
-            function elementDrag(e) { e.preventDefault(); pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY; pos3 = e.clientX; pos4 = e.clientY; elmnt.style.top = (elmnt.offsetTop - pos2) + "px"; elmnt.style.left = (elmnt.offsetLeft - pos1) + "px"; }
-            function dragTouchStart(e) { pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY; document.ontouchend = closeDragElement; document.ontouchmove = elementTouchDrag; }
-            function elementTouchDrag(e) { pos1 = pos3 - e.touches[0].clientX; pos2 = pos4 - e.touches[0].clientY; pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY; elmnt.style.top = (elmnt.offsetTop - pos2) + "px"; elmnt.style.left = (elmnt.offsetLeft - pos1) + "px"; }
+
+            function dragMouseDown(e) {
+                e.preventDefault(); pos3 = e.clientX; pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+            function elementDrag(e) {
+                e.preventDefault(); pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
+            function dragTouchStart(e) {
+                pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY;
+                document.ontouchend = closeDragElement;
+                document.ontouchmove = elementTouchDrag;
+            }
+            function elementTouchDrag(e) {
+                pos1 = pos3 - e.touches[0].clientX; pos2 = pos4 - e.touches[0].clientY;
+                pos3 = e.touches[0].clientX; pos4 = e.touches[0].clientY;
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
             function closeDragElement() { document.onmouseup = null; document.onmousemove = null; document.ontouchend = null; document.ontouchmove = null; }
         }
     </script>
