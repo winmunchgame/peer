@@ -323,7 +323,7 @@
 
     <script>
         let peer, conn, myId;
-        let localStream, activeCall;
+        let localStream;
         let isHost = false; 
         let controlsTimeout;
         let isLocked = false;
@@ -388,32 +388,46 @@
 
             peer.on('connection', (c) => { setupConnection(c); });
             
+            // --- UPDATED CALL HANDLING (Fix for Voice/Video Chat) ---
             peer.on('call', (call) => {
                 const type = call.metadata?.type;
                 
                 if (type === 'movie-stream') {
+                    // This is the MOVIE stream (One way: Host -> Peer)
                     isHost = false; 
                     enterTheaterMode();
                     document.getElementById('host-controls').style.display = 'none';
                     document.getElementById('movie-title').innerText = "Watching Peer's Movie";
                     
-                    call.answer(); 
+                    call.answer(); // Answer without sending stream back (Watcher)
                     call.on('stream', (remoteStream) => {
                         const vid = document.getElementById('main-video');
                         vid.srcObject = remoteStream;
                         vid.play().catch(e => console.log("Auto-play blocked", e));
                     });
                 } else {
+                    // This is the USER MEDIA stream (Two way: Face/Voice)
+                    // We need to answer with our own stream to establish 2-way call
                     const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } };
+                    
                     navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
                         localStream = stream;
+                        // Show my face in self-pip
                         document.getElementById('self-pip').srcObject = stream;
+                        updateCallButtonsState();
+                        
+                        // Answer the call with MY stream
                         call.answer(stream);
-                        activeCall = call;
+                        
+                        // When I receive THEIR stream (Peer's face)
                         call.on('stream', (remoteStream) => {
-                            document.getElementById('peer-pip').srcObject = remoteStream;
+                            // Show their face in peer-pip
+                            const peerPip = document.getElementById('peer-pip');
+                            peerPip.srcObject = remoteStream;
+                            peerPip.muted = false; // Ensure we hear them
+                            peerPip.play().catch(e => console.error("Peer video play error", e));
                         });
-                    }).catch(e => console.error("Call error", e));
+                    }).catch(e => console.error("Call answer error", e));
                 }
             });
         }
@@ -467,31 +481,20 @@
             const canvas = document.getElementById('stream-canvas');
             const ctx = canvas.getContext('2d');
             
-            // --- FIX: Setup Web Audio API only once ---
+            // --- 1. SETUP MOVIE AUDIO (Web Audio API) ---
             if (!audioCtx) {
                 try {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    // Connect video element to Audio Context
                     audioSourceNode = audioCtx.createMediaElementSource(mainVid);
-                    // Destination for Stream (Peer hears this)
                     audioDestNode = audioCtx.createMediaStreamDestination();
-                    
-                    // Routing:
-                    // 1. Source -> Destination (Stream)
-                    audioSourceNode.connect(audioDestNode);
-                    // 2. Source -> Local Speakers (Host hears this)
-                    audioSourceNode.connect(audioCtx.destination);
-                } catch(e) {
-                    console.error("Audio Context Setup Error:", e);
-                }
+                    audioSourceNode.connect(audioDestNode); // Stream audio
+                    audioSourceNode.connect(audioCtx.destination); // Local audio
+                } catch(e) { console.error("Audio Context Setup Error:", e); }
             }
-            if(audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
+            if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
             mainVid.srcObject = null;
             mainVid.src = url;
-            // Note: Don't set muted=true, we handle local audio via audioCtx.destination
             
             document.getElementById('movie-title').innerText = file.name;
             document.getElementById('host-controls').style.display = 'flex';
@@ -499,7 +502,6 @@
             enterTheaterMode();
 
             mainVid.onloadedmetadata = () => {
-                // Set optimized streaming resolution (Max 720p width)
                 const scale = Math.min(1, 1280 / mainVid.videoWidth);
                 canvas.width = mainVid.videoWidth * scale;
                 canvas.height = mainVid.videoHeight * scale;
@@ -507,30 +509,29 @@
                 mainVid.play();
                 updatePlayIcon(true);
                 
-                // Start drawing to canvas
+                // Canvas loop
                 clearInterval(canvasInterval);
                 canvasInterval = setInterval(() => {
                     if(!mainVid.paused && !mainVid.ended) {
                         ctx.drawImage(mainVid, 0, 0, canvas.width, canvas.height);
                     }
-                }, 1000 / 24); // 24 FPS lock
+                }, 1000 / 24);
 
-                // Capture stream from canvas (Video Only)
+                // Create Stream
                 const canvasStream = canvas.captureStream(24);
-                
-                // Get Audio Track from Web Audio API Destination
                 const audioTrack = audioDestNode ? audioDestNode.stream.getAudioTracks()[0] : null;
                 
-                // Combine Video(Canvas) + Audio(Web Audio API)
                 const finalStream = new MediaStream();
                 canvasStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
                 if(audioTrack) finalStream.addTrack(audioTrack);
                 
+                // --- CALL 1: SEND MOVIE STREAM ---
                 if(conn) {
                     peer.call(conn.peer, finalStream, {metadata: {type: 'movie-stream'}});
                 }
             };
             
+            // Sync Loop
             setInterval(() => {
                 if(isHost && mainVid && conn) {
                     conn.send({
@@ -543,6 +544,7 @@
                 }
             }, 500);
 
+            // --- CALL 2: INITIATE VIDEO CHAT ---
             startCall(); 
         }
 
@@ -656,21 +658,30 @@
             if(!isLocked) resetControlsTimer();
         }
 
+        // --- NEW START CALL FUNCTION (For Video Chat) ---
         function startCall() {
             const vidConstraint = { width: { ideal: 320 }, height: { ideal: 240 } };
+            
             navigator.mediaDevices.getUserMedia({video: vidConstraint, audio:true}).then(stream => {
                 localStream = stream;
+                // Show my face
                 document.getElementById('self-pip').srcObject = stream;
                 updateCallButtonsState();
+                
                 if(conn) {
-                    const call = peer.call(conn.peer, stream);
-                    activeCall = call;
+                    // Call the peer specifically for User Media (Face/Voice)
+                    const call = peer.call(conn.peer, stream, {metadata: {type: 'user-media'}});
+                    
                     call.on('stream', (remoteStream) => {
-                        document.getElementById('peer-pip').srcObject = remoteStream;
+                        // When peer answers, show their face
+                        const peerPip = document.getElementById('peer-pip');
+                        peerPip.srcObject = remoteStream;
+                        peerPip.muted = false; 
+                        peerPip.play();
                     });
                 }
             }).catch(e => {
-                console.log("Mic/Cam permission needed for call");
+                console.log("Mic/Cam permission needed for call", e);
             });
         }
 
